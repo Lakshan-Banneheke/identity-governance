@@ -41,52 +41,56 @@ import java.util.Map;
 public class IdentityGovernanceServiceImpl implements IdentityGovernanceService {
 
     private static final Log log = LogFactory.getLog(IdentityGovernanceServiceImpl.class);
+    // Map to hold locks for each tenantDomain
+    private static final Map<String, Object> tenantLocks = new HashMap<>();
 
     public void updateConfiguration(String tenantDomain, Map<String, String> configurationDetails)
             throws IdentityGovernanceException {
 
-        try {
-            IdpManager identityProviderManager = IdentityMgtServiceDataHolder.getInstance().getIdpManager();
-            IdentityProvider residentIdp = identityProviderManager.getResidentIdP(tenantDomain);
+        synchronized (getTenantLock(tenantDomain)) {
 
-            IdentityProviderProperty[] identityMgtProperties = residentIdp.getIdpProperties();
-            List<IdentityProviderProperty> newProperties = new ArrayList<>();
-            for (IdentityProviderProperty identityMgtProperty : identityMgtProperties) {
-                IdentityProviderProperty prop = new IdentityProviderProperty();
-                String key = identityMgtProperty.getName();
-                prop.setName(key);
-                if (configurationDetails.containsKey(key)) {
-                    prop.setValue(configurationDetails.get(key));
-                } else {
-                    prop.setValue(identityMgtProperty.getValue());
-                }
-                newProperties.add(prop);
-                configurationDetails.remove(key);
-            }
-            for (Map.Entry<String, String> entry : configurationDetails.entrySet()) {
-                IdentityProviderProperty prop = new IdentityProviderProperty();
-                prop.setName(entry.getKey());
-                prop.setValue(entry.getValue());
-                newProperties.add(prop);
-            }
+            try {
+                IdpManager identityProviderManager = IdentityMgtServiceDataHolder.getInstance().getIdpManager();
+                IdentityProvider residentIdp = identityProviderManager.getResidentIdP(tenantDomain);
 
-            residentIdp.setIdpProperties(newProperties.toArray(new IdentityProviderProperty[newProperties.size()]));
-            FederatedAuthenticatorConfig[] authenticatorConfigs = residentIdp.getFederatedAuthenticatorConfigs();
-            List<FederatedAuthenticatorConfig> configsToSave = new ArrayList<>();
-            for (FederatedAuthenticatorConfig authenticatorConfig : authenticatorConfigs) {
-                if (IdentityApplicationConstants.Authenticator.PassiveSTS.NAME.equals(authenticatorConfig.getName
-                        ()) || IdentityApplicationConstants.Authenticator.SAML2SSO.NAME.equals(authenticatorConfig
-                        .getName())) {
-                    configsToSave.add(authenticatorConfig);
+                IdentityProviderProperty[] identityMgtProperties = residentIdp.getIdpProperties();
+                List<IdentityProviderProperty> newProperties = new ArrayList<>();
+                for (IdentityProviderProperty identityMgtProperty : identityMgtProperties) {
+                    IdentityProviderProperty prop = new IdentityProviderProperty();
+                    String key = identityMgtProperty.getName();
+                    prop.setName(key);
+                    if (configurationDetails.containsKey(key)) {
+                        prop.setValue(configurationDetails.get(key));
+                    } else {
+                        prop.setValue(identityMgtProperty.getValue());
+                    }
+                    newProperties.add(prop);
+                    configurationDetails.remove(key);
                 }
+                for (Map.Entry<String, String> entry : configurationDetails.entrySet()) {
+                    IdentityProviderProperty prop = new IdentityProviderProperty();
+                    prop.setName(entry.getKey());
+                    prop.setValue(entry.getValue());
+                    newProperties.add(prop);
+                }
+
+                residentIdp.setIdpProperties(newProperties.toArray(new IdentityProviderProperty[newProperties.size()]));
+                FederatedAuthenticatorConfig[] authenticatorConfigs = residentIdp.getFederatedAuthenticatorConfigs();
+                List<FederatedAuthenticatorConfig> configsToSave = new ArrayList<>();
+                for (FederatedAuthenticatorConfig authenticatorConfig : authenticatorConfigs) {
+                    if (IdentityApplicationConstants.Authenticator.PassiveSTS.NAME.equals(authenticatorConfig.getName
+                            ()) || IdentityApplicationConstants.Authenticator.SAML2SSO.NAME.equals(authenticatorConfig
+                            .getName())) {
+                        configsToSave.add(authenticatorConfig);
+                    }
+                }
+                residentIdp.setFederatedAuthenticatorConfigs(configsToSave.toArray(new
+                        FederatedAuthenticatorConfig[configsToSave.size()]));
+                identityProviderManager.updateResidentIdP(residentIdp, tenantDomain);
+            } catch (IdentityProviderManagementException e) {
+                log.error("Error while updating identityManagement Properties of Resident Idp.", e);
             }
-            residentIdp.setFederatedAuthenticatorConfigs(configsToSave.toArray(new
-                    FederatedAuthenticatorConfig[configsToSave.size()]));
-            identityProviderManager.updateResidentIdP(residentIdp, tenantDomain);
-        } catch (IdentityProviderManagementException e) {
-            log.error("Error while updating identityManagement Properties of Resident Idp.", e);
         }
-
     }
 
     @Override
@@ -239,4 +243,11 @@ public class IdentityGovernanceServiceImpl implements IdentityGovernanceService 
         return null;
     }
 
+    private Object getTenantLock(String tenantDomain) {
+        synchronized (tenantLocks) {
+            // Create a lock for the tenantDomain if not present
+            tenantLocks.putIfAbsent(tenantDomain, new Object());
+            return tenantLocks.get(tenantDomain);
+        }
+    }
 }
